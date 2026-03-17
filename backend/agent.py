@@ -162,7 +162,7 @@ def _build_mcp_servers() -> Dict[str, Any]:
         "workiq": {
             "type": "local",
             "command": "npx",
-            "args": ["-y", "@microsoft/workiq", "--account", "hishida@MngEnvMCAP873995.onmicrosoft.com", "mcp"],
+            "args": ["-y", "@microsoft/workiq@latest", "mcp"],
             "tools": ["*"],
         }
     }
