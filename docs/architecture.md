@@ -4,101 +4,124 @@
 
 ```
 Browser
-  -> Next.js chat UI
-  -> WebSocket / REST
+  -> Next.js SiteCheckerInterface（単一ページ）
+  -> REST + SSE
   -> FastAPI backend
-  -> Site Approval Bot (GitHub Copilot SDK)
-     |- Local Python tool: generate_powerpoint_tool
-     `- Optional session-level MCP server: Work IQ
+     |- POST /api/check           — チェックジョブ作成
+     `- GET  /api/check/{id}/stream — SSEストリーム
+        -> CheckAgent (GitHub Copilot SDK)
+           |- Session-level MCP server: Work IQ (@microsoft/workiq@latest)
+           `- Local Python tool: site_standards_checker（ルールベース）
 ```
 
 ## Core Components
 
 | Component | Technology | Responsibility |
 |-----------|------------|----------------|
-| Frontend | Next.js + React | Chat UX, streaming display, approval report panel, tool execution cards |
-| Backend API | FastAPI + WebSocket | Session creation, event streaming, report downloads |
-| Agent runtime | GitHub Copilot SDK | Manages Copilot sessions, forwards prompts, streams tool and model events |
-| Organizational context | Work IQ MCP | Exposes Microsoft 365 data sources directly to the Copilot session |
-| Report generation | `python-pptx` | Builds downloadable `.pptx` summaries |
+| Frontend | Next.js + React (TypeScript) | 単一ページUI（サイト選択・チェック項目トグル・自由入力）、SSEでログ・結果をリアルタイム表示 |
+| Backend API | FastAPI + SSE | チェックジョブ作成（REST）、エージェントログ・結果のSSEストリーム |
+| Check Agent runtime | GitHub Copilot SDK | ジョブごとにCopilotセッションを作成、Work IQ MCPを接続、site_standards_checkerツールを登録 |
+| Organizational context | Work IQ MCP | M365上のメール・会議録・SharePoint文書をCopilotセッションに直接公開 |
+| Compliance checker | `site_standards_checker` (Python) | カバレッジ基準・アンテナ高さ条例・自治体条件をルールベースで突合し構造化JSONを返す |
 
 ## Runtime Flow
 
-### 1. Session startup
+### 1. チェックジョブ作成
 
-`backend/agent.py` creates a `CopilotClient` and, when `WORKIQ_ENABLED=true`, attaches Work IQ as a session-level MCP server.
+フロントエンドが `POST /api/check` を呼び出すと:
 
-Only one local custom tool is registered today:
+1. `CheckAgent.create_job()` が `CheckJob`（check_id, site_id, check_items, free_text, asyncio.Queue）を生成する。
+2. `asyncio.create_task()` でバックグラウンドジョブを開始し、即座に `{ "check_id": "..." }` を返す。
 
-- `generate_powerpoint_tool`
-
-### 2. User message flow
+### 2. エージェント実行フロー
 
 ```
-Browser sends { prompt, model }
-  -> FastAPI websocket endpoint
-  -> SupportAgent.send_message(...)
-  -> Copilot session receives the prompt
-  -> Model calls Work IQ MCP tools as needed
-  -> Model may call generate_powerpoint_tool
-  -> Events stream back to the browser
+POST /api/check → check_id を返す
+  -> CheckAgent._run_job(job)
+     -> CopilotClient.create_session(session_id, model, skill_directories, tools=[site_standards_checker], mcp_servers={workiq})
+     -> session.send(prompt)
+        -> モデルがWork IQ MCPツールを呼び出してデータ収集
+        -> モデルが site_standards_checker を呼び出して突合・判定
+     -> on_event() でSDKイベントをlog_queueへエンキュー
 ```
 
-### 3. Event streaming
+### 3. SSEストリーム
 
-The backend listens to Copilot SDK events and normalizes them into frontend-friendly JSON payloads:
+フロントエンドが `GET /api/check/{id}/stream` を開くと:
 
-- `assistant.message_delta`
-- `assistant.message`
-- `tool.execution_start`
-- `tool.execution_complete`
-- `session.idle`
-- `error`
+- `job.log_queue` からメッセージを取り出してSSEイベントとして送出する。
+- `None`（sentinel）を受信するとストリームを終了する。
 
-These events drive the message stream, tool execution cards, and approval report panel.
+送出するイベント:
+
+```json
+{ "type": "log",    "message": "Work IQ クエリ: \"A市基地局 自治体条件\"" }
+{ "type": "result", "data": { "verdict": "conditional_go", ... } }
+{ "type": "error",  "message": "エラー内容" }
+```
+
+### 4. SDK イベントハンドリング
+
+`check_agent.py` の `on_event()` ハンドラが以下のSDKイベントを処理する:
+
+| SDK Event | 処理内容 |
+|-----------|---------|
+| `tool.execution_start` (site_standards_checker) | "site-standards-checker ツールを実行中..." をキューへ |
+| `tool.execution_start` (その他) | Work IQクエリメッセージをキューへ |
+| `tool.execution_complete` (site_standards_checker) | レポート生成完了メッセージ、結果JSONをパースして `result` イベントへ |
+| `tool.execution_complete` (その他) | "データ取得完了" をキューへ |
+| `session.idle` | done_eventをセットしてジョブ完了 |
 
 ## Tool Model
 
 ### Work IQ MCP
 
-- Attached directly to each Copilot session through `mcp_servers`
-- Started with `npx -y @microsoft/workiq ... mcp`
-- Tool names come from the Work IQ server itself
-- No Python wrapper exists in this repository
+- 各チェックジョブのCopilotセッションに `mcp_servers` 設定で接続
+- `npx -y @microsoft/workiq@latest mcp` として起動
+- `WORKIQ_ENABLED=false` の場合は接続しない（デモデータへのフォールバック）
 
-### generate_powerpoint_tool
+### site_standards_checker
 
-- Implemented in `backend/tools/pptx_tool.py`
-- Uses `python-pptx`
-- Generates a slide deck in `backend/generated_reports/`
-- Returns a download path consumed by `GET /reports/{filename}`
+- `backend/tools/site_checker_tool.py` に実装
+- Copilot SDK の `@define_tool` デコレータで登録
+- 入力: `SiteStandardsCheckerParams`（カバレッジ値・アンテナ高さ・自治体条件・代替案情報・ソース一覧）
+- 出力: 構造化JSON（verdict / verdict_reason / checks / alternatives / actions / sources / coverage）
+- LLM判定ではなく固定ルールで突合する
 
-## Session Lifecycle
+## Job Lifecycle
 
-- The backend keeps one `CopilotSession` per chat `session_id`
-- Sessions are stored in memory and reused across websocket messages
-- Deleting a session destroys the underlying Copilot session
-- Restarting the backend clears all in-memory sessions
+- `CheckJob` は `check_id`・`site_id`・`check_items`・`free_text`・`asyncio.Queue`・`result` を保持する
+- ジョブはメモリ内の辞書 (`_jobs`) に格納される
+- バックエンドを再起動するとすべてのジョブが消去される
+
+## Skill Configuration
+
+`backend/skills/checker-skills/site-checker/SKILL.md` がエージェントの動作を制御する:
+
+- Work IQ MCPへのクエリを英語で実行するよう指示
+- 収集した情報をもとに `site_standards_checker` ツールを呼び出すよう指示
 
 ## Configuration
 
-Relevant environment variables:
+環境変数一覧:
 
 | Variable | Purpose |
 |----------|---------|
-| `COPILOT_GITHUB_TOKEN` | Optional GitHub token for Copilot authentication |
-| `COPILOT_CLI_PATH` | Optional explicit Copilot CLI path |
-| `WORKIQ_ENABLED` | Enables the Work IQ MCP attachment |
-| `BYOK_PROVIDER` | Enables BYOK mode |
-| `BYOK_BASE_URL` | Model provider endpoint |
-| `BYOK_API_KEY` | Model provider API key |
-| `BYOK_AZURE_API_VERSION` | Azure BYOK API version |
-| `BACKEND_HOST` | FastAPI bind host |
-| `BACKEND_PORT` | FastAPI bind port |
-| `CORS_ORIGINS` | Allowed frontend origins |
+| `COPILOT_GITHUB_TOKEN` | Copilot認証用GitHubトークン（省略可） |
+| `COPILOT_CLI_PATH` | Copilot CLIの明示的パス（省略可） |
+| `WORKIQ_ENABLED` | Work IQ MCPを接続する（`true` / `false`） |
+| `BYOK_PROVIDER` | BYOKモードを有効化（`openai` / `azure` / `anthropic`） |
+| `BYOK_BASE_URL` | モデルプロバイダーエンドポイント |
+| `BYOK_API_KEY` | モデルプロバイダーAPIキー |
+| `BYOK_MODEL` | 使用するモデル名（デフォルト: `gpt-4o`） |
+| `BYOK_AZURE_API_VERSION` | Azure BYOK APIバージョン |
+| `BACKEND_HOST` | FastAPIバインドホスト |
+| `BACKEND_PORT` | FastAPIバインドポート |
+| `CORS_ORIGINS` | 許可するフロントエンドオリジン |
 
 ## Design Notes
 
-- Work IQ access is intentionally delegated to MCP instead of custom Python wrappers.
-- Local tool surface area is intentionally small; only PowerPoint generation is implemented in Python.
-- The approval workflow lives in `backend/skills/site_approval.py`, which instructs the model to gather context from Work IQ before producing a report.
+- コンプライアンス判定はLLMではなくルールベースのPythonコードで実施し、判定の再現性を確保している。
+- Work IQのデータアクセスはMCPに委譲しており、Pythonラッパーは存在しない。
+- フロントエンドはSSEのみを使用し、WebSocketは使用しない（チェッカーUIの場合）。
+- 旧来のチャットUI・WebSocketエンドポイントはレガシーとして残存しているが、メインデモでは使用しない。
