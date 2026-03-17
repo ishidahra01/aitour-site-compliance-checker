@@ -346,7 +346,13 @@ export default function ChatInterface() {
   };
 
   const handleMunicipalityTrigger = () => {
-    sendMessage(MUNICIPALITY_TRIGGER_PROMPT);
+    const freeText = inputValue.trim();
+    if (freeText) {
+      setInputValue("");
+      sendMessage(freeText);
+    } else {
+      sendMessage(MUNICIPALITY_TRIGGER_PROMPT);
+    }
   };
 
   // -------------------------------------------------------------------------
@@ -403,8 +409,13 @@ export default function ChatInterface() {
           className="text-xs px-3 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white
             disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium shrink-0"
         >
-          承認フローを開始
+          {inputValue.trim() ? "送信" : "承認フローを開始"}
         </button>
+        {!inputValue.trim() && (
+          <span className="text-xs text-amber-600 dark:text-amber-400">
+            ※ 下のテキストフィールドに入力すると、その内容が送信されます
+          </span>
+        )}
       </div>
 
       {/* 2-pane main area */}

@@ -1,12 +1,15 @@
 """
-FastAPI backend for the Site Approval Bot.
+FastAPI backend for the Site Approval Bot and 基地局設置チェッカー.
 
 Endpoints:
-  GET  /models            — list available Copilot models
-  POST /sessions          — create a new chat session
-  DELETE /sessions/{id}   — delete a session
-  WS   /ws/chat/{id}      — WebSocket chat with streaming events
-  GET  /reports/{filename} — download a generated PowerPoint report
+  GET  /health                    — health check
+  GET  /models                    — list available Copilot models
+  POST /sessions                  — create a new chat session (legacy)
+  DELETE /sessions/{id}           — delete a session (legacy)
+  WS   /ws/chat/{id}              — WebSocket chat with streaming events (legacy)
+  GET  /reports/{filename}        — download a generated PowerPoint report (legacy)
+  POST /api/check                 — start a site compliance check job
+  GET  /api/check/{id}/stream     — SSE stream of agent execution log + result
 """
 from __future__ import annotations
 
@@ -16,13 +19,15 @@ import os
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import List, Optional
 
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -34,26 +39,33 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    try:
-        await get_agent().start()
-        logger.info("Site Approval Bot agent started successfully.")
-    except Exception as exc:
-        logger.warning(
-            "Could not start Copilot SDK agent: %s. "
-            "Ensure the Copilot CLI is installed and authenticated.",
-            exc,
-        )
+    for factory, label in [
+        (get_agent, "SupportAgent"),
+        (get_check_agent, "CheckAgent"),
+    ]:
+        try:
+            await factory().start()
+            logger.info("%s started successfully.", label)
+        except Exception as exc:
+            logger.warning(
+                "Could not start %s: %s. "
+                "Ensure the Copilot CLI is installed and authenticated.",
+                label,
+                exc,
+            )
     try:
         yield
     finally:
         if _agent:
             await _agent.stop()
+        if _check_agent:
+            await _check_agent.stop()
 
 
 app = FastAPI(
-    title="Site Approval Bot API",
-    description="Backend for the Site Approval Bot powered by GitHub Copilot SDK, Work IQ MCP, and local PowerPoint generation",
-    version="1.0.0",
+    title="基地局設置チェッカー API",
+    description="Backend for the 基地局設置チェッカー powered by GitHub Copilot SDK, Work IQ MCP, and rule-based compliance checking",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -73,6 +85,7 @@ app.add_middleware(
 
 # Lazy import: avoids failing at startup if copilot CLI is not installed yet
 _agent = None
+_check_agent = None
 
 
 def get_agent():
@@ -81,6 +94,14 @@ def get_agent():
         from agent import SupportAgent
         _agent = SupportAgent()
     return _agent
+
+
+def get_check_agent():
+    global _check_agent
+    if _check_agent is None:
+        from check_agent import CheckAgent
+        _check_agent = CheckAgent()
+    return _check_agent
 
 
 REPORTS_DIR = Path(__file__).parent / "generated_reports"
@@ -142,7 +163,66 @@ async def download_report(filename: str) -> FileResponse:
 
 
 # ---------------------------------------------------------------------------
-# WebSocket chat endpoint
+# 基地局設置チェッカー API endpoints
+# ---------------------------------------------------------------------------
+
+
+class CheckRequest(BaseModel):
+    site_id: str
+    check_items: List[str]
+    free_text: Optional[str] = None
+
+
+@app.post("/api/check")
+async def create_check(body: CheckRequest) -> dict:
+    """
+    Start a site compliance check job.
+
+    Returns {"check_id": "..."} immediately.
+    Connect to GET /api/check/{check_id}/stream for the SSE log stream.
+    """
+    job = get_check_agent().create_job(
+        site_id=body.site_id,
+        check_items=body.check_items,
+        free_text=body.free_text or None,
+    )
+    return {"check_id": job.check_id}
+
+
+@app.get("/api/check/{check_id}/stream")
+async def stream_check(check_id: str):
+    """
+    SSE stream of agent execution log and final result for a check job.
+
+    Events emitted:
+      data: {"type": "log", "message": "..."}
+      data: {"type": "result", "data": {CheckResult}}
+      data: {"type": "error", "message": "..."}
+    """
+    job = get_check_agent().get_job(check_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Check job not found")
+
+    async def generate():
+        while True:
+            item = await job.log_queue.get()
+            if item is None:
+                break
+            yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# WebSocket chat endpoint (legacy)
 # ---------------------------------------------------------------------------
 
 @app.websocket("/ws/chat/{session_id}")

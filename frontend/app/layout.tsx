@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Site Approval Bot",
-  description: "Site Approval Bot powered by GitHub Copilot SDK and Work IQ — automates approval workflows for site installation requests",
+  title: "基地局設置チェッカー",
+  description:
+    "基地局設置適合性チェッカー — Powered by GitHub Copilot SDK, Work IQ MCP, M365 Copilot",
 };
 
 export default function RootLayout({
@@ -12,10 +13,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className="antialiased font-sans">
-        {children}
-      </body>
+    <html lang="ja">
+      <body className="antialiased font-sans bg-gray-50">{children}</body>
     </html>
   );
 }
