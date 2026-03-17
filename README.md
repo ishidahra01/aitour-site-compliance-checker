@@ -1,29 +1,30 @@
-# Site Approval Bot
+# 基地局設置チェッカー
 
-AI agent for municipality site approval workflows, built with GitHub Copilot SDK, Work IQ MCP, and a Next.js chat UI.
+CXO向けデモ用Webアプリ「基地局設置チェッカー」— GitHub Copilot SDK × Work IQ MCP × M365 Copilotの3層連携（Openness Proof）を実証するデモアプリです。
 
 [Architecture Details](docs/architecture.md)
 
 ## Overview
 
-This project automates the approval workflow for mobile base station site installation requests.
+PMが対象サイトを選んでボタンを押すと、GitHub Copilot SDKがWork IQ MCP経由でM365上の散在データ（メール・会議録・設計基準書）を収集・突合し、適合性レポートを画面に表示します。
 
-When a municipality permission email arrives, the agent:
+チェックの流れ:
 
-1. Collects relevant organizational context through Work IQ MCP tools.
-2. Analyzes municipality conditions, RF design constraints, and outstanding decisions.
-3. Produces a structured site approval report for the right-hand panel.
-4. Generates a PowerPoint summary on request.
+1. Work IQ MCPツールで自治体条件・RF設計制約・設置基準書・代替案情報を収集する。
+2. ルールベースの `site_standards_checker` ツールでカバレッジ基準・アンテナ高さ条例・自治体条件を突合する。
+3. 判定結果（GO / 条件付き GO / NO-GO）とチェック詳細・推奨アクションをUIに表示する。
 
 ## Architecture
 
 ```
-User (municipality email or chat)
- -> Next.js Chat UI (port 3000)
+Browser
+ -> Next.js 単一ページUI（SiteCheckerInterface） (port 3000)
  -> FastAPI Backend (port 8000)
- -> Site Approval Bot Agent (GitHub Copilot SDK)
-    |- Session-level MCP server: Work IQ (`npx -y @microsoft/workiq ... mcp`)
-    `- Local tool: generate_powerpoint_tool (`python-pptx`)
+    |- POST /api/check           — チェックジョブ作成
+    `- GET  /api/check/{id}/stream — SSEでログ・結果をストリーム
+       -> CheckAgent (GitHub Copilot SDK)
+          |- Session-level MCP server: Work IQ (@microsoft/workiq@latest)
+          `- Local tool: site_standards_checker (rule-based Python)
 ```
 
 ## Quick Start
@@ -32,17 +33,17 @@ User (municipality email or chat)
 
 | Requirement | Details |
 |-------------|---------|
-| GitHub Copilot subscription or BYOK | The backend uses GitHub Copilot SDK. |
+| GitHub Copilot subscription または BYOK | バックエンドがGitHub Copilot SDKを使用します。 |
 | Copilot CLI | `gh extension install github/gh-copilot` |
-| Node.js 18+ | Required for the frontend and Work IQ MCP server. |
-| Python 3.11+ | Required for the backend. |
-| Work IQ access | Required for live organizational context retrieval. |
+| Node.js 18+ | フロントエンドとWork IQ MCPサーバーに必要です。 |
+| Python 3.11+ | バックエンドに必要です。 |
+| Work IQ access | 実データを使ったデモに必要です（無効化も可）。 |
 
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/ishidahra01/aitour-site-approval-bot.git
-cd aitour-site-approval-bot
+git clone https://github.com/ishidahra01/aitour-site-compliance-checker.git
+cd aitour-site-compliance-checker
 cp .env.example .env
 ```
 
@@ -56,7 +57,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-The backend API listens on `http://localhost:8000`.
+バックエンドAPIは `http://localhost:8000` でリッスンします。
 
 ### 3. Frontend setup
 
@@ -66,7 +67,7 @@ npm install
 npm run dev
 ```
 
-The chat UI is available at `http://localhost:3000`.
+アプリは `http://localhost:3000` で利用できます。
 
 ### 4. Authenticate Copilot and Work IQ
 
@@ -79,20 +80,20 @@ npm install -g @microsoft/workiq
 workiq login
 ```
 
-If `WORKIQ_ENABLED=true`, the backend attaches Work IQ as a session-level MCP server for each Copilot session.
+`WORKIQ_ENABLED=true` の場合、バックエンドは各チェックジョブのCopilotセッションにWork IQをMCPサーバーとして接続します。
 
 ## Environment Variables
 
-Minimum configuration:
+最低限の設定:
 
 ```env
 COPILOT_GITHUB_TOKEN=ghp_your_github_token
 WORKIQ_ENABLED=true
 ```
 
-Or authenticate GitHub CLI with `gh auth login` and omit `COPILOT_GITHUB_TOKEN`.
+または `gh auth login` でGitHub CLIを認証して `COPILOT_GITHUB_TOKEN` を省略できます。
 
-Optional BYOK configuration:
+オプション（BYOK）:
 
 ```env
 BYOK_PROVIDER=azure
@@ -104,79 +105,69 @@ BYOK_AZURE_API_VERSION=2024-10-21
 
 ## Demo Flow
 
-Example prompt:
+1. サイト選択プルダウンで「A市中央公園 (Site-2024-0847)」を選択する。
+2. チェック項目（自治体条件突合・設計基準チェック・代替案分析・コスト試算）をトグルで選択する（または追加指示フィールドに自由入力する）。
+3. 「✓ 適合性チェックを実行」ボタンを押す。
+4. エージェントログエリアにWork IQクエリや処理状況がリアルタイム表示される。
+5. チェック完了後、結果エリアに判定バッジ・数値カード・チェック結果テーブル・推奨アクション・情報ソースが表示される。
 
-> "新しい許可書メールが届きました。中村市と鈴木設計の担当者から必要な承認を集めてください。"
+エージェントログの表示例:
 
-Expected agent flow:
-
-1. Use Work IQ MCP tools to gather municipality coordination history, meeting notes, and design constraints.
-2. Synthesize findings into a `site-approval-report` code block.
-3. Generate a `.pptx` report when asked.
-
-Example report shape:
-
-```text
-Site Approval Report
-====================
-
-Site: [Site name / location]
-Triggered by: [Trigger event]
-Date: [Date]
-
-Municipality Conditions
------------------------
-- [Condition 1]: satisfied / pending / unknown
-
-RF Design Conditions
---------------------
-- [Condition 1]: satisfied / pending cost approval
-
-Status Summary
---------------
-- Municipality requirements: satisfied / partially satisfied / pending
-- RF design: satisfied / pending cost approval / requires action
-
-Recommended Actions
--------------------
-1. [Action item] - Responsible: [Person/team]
-
-Approval Required From
-----------------------
-- [Person 1] ([Role/reason])
+```
+Copilot SDK セッション開始 (model: gpt-4o)
+MCP: Work IQ connected ✓
+Work IQ クエリ: "A市基地局 自治体条件"
+  → データ取得完了
+Work IQ クエリ: "A市基地局 設計要件"
+  → データ取得完了
+site-standards-checker ツールを実行中...
+レポート生成完了 ✓
 ```
 
 ## UI Features
 
-| Feature | Description |
-|---------|-------------|
-| Streaming responses | Messages stream token-by-token as the model responds. |
-| Approval report panel | Renders the `site-approval-report` block in a dedicated panel. |
-| Tool execution cards | Displays MCP and local tool calls with arguments and results. |
-| Download button | Appears automatically after PowerPoint generation. |
-| Model selector | Switches between available Copilot models. |
+| 機能 | 説明 |
+|------|------|
+| サイト選択プルダウン | A市中央公園など3件のデモサイトから選択。 |
+| チェック項目トグル | 自治体条件突合 / 設計基準チェック / 代替案分析 / コスト試算を個別ON/OFF。 |
+| 追加指示フィールド | 自由入力するとエージェントへの指示が上書きされる。 |
+| エージェントログ | 黒背景・モノスペース、SSEで1行ずつリアルタイム表示。 |
+| 判定バッジ | `GO`（緑）/ `条件付き GO`（黄）/ `NO-GO`（赤）を大きく表示。 |
+| カバレッジ数値カード | 現状 / 社内基準 / 代替案適用後の3枚。 |
+| チェック結果テーブル | 4列（項目 / 基準 / 現状 / 判定）、pass=緑・fail=赤・constraint=黄バッジ。 |
+| 推奨アクション | 番号付きリスト。 |
+| 情報ソース | 参照したM365データソースをピル形式で表示。 |
 
 ## Project Structure
 
 ```
 .
 |- backend/
-|  |- main.py
-|  |- agent.py
+|  |- main.py              — FastAPI エントリポイント（/api/check, /api/check/{id}/stream, レガシー endpoints）
+|  |- check_agent.py       — CheckAgent: Copilot SDKセッション管理・ジョブキュー
+|  |- agent.py             — SupportAgent: レガシーチャットエージェント
 |  |- requirements.txt
-|  |- generated_reports/
+|  |- generated_reports/   — PowerPointレポート出力先（レガシー）
 |  |- skills/
-|  |  |- __init__.py
-|  |  `- site_approval.py
+|  |  |- checker-skills/
+|  |  |  `- site-checker/
+|  |  |     `- SKILL.md    — site_standards_checker 呼び出しワークフロー指示
+|  |  |- site_checker.py   — スキルディレクトリパス定義
+|  |  `- site_approval.py  — レガシー承認ワークフロースキル
 |  `- tools/
-|     |- __init__.py
-|     `- pptx_tool.py
+|     |- site_checker_tool.py  — site_standards_checker ルールベースツール
+|     `- pptx_tool.py          — generate_powerpoint_tool（レガシー）
 |- docs/
 |  `- architecture.md
 |- frontend/
 |  |- app/
 |  |  |- components/
-|  |  `- lib/
+|  |  |  `- SiteCheckerInterface.tsx  — メインUIコンポーネント
+|  |  |- lib/
+|  |  |  |- api.ts     — submitCheck / getCheckStreamUrl
+|  |  |  `- types.ts   — CheckResult, LogEvent 等の型定義
+|  |  |- layout.tsx
+|  |  `- page.tsx
 |  |- package.json
 |  `- tsconfig.json
 |- .env.example
@@ -185,48 +176,91 @@ Approval Required From
 
 ## API Reference
 
-### REST endpoints
+### 基地局設置チェッカー API
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/health` | Health check |
-| `GET` | `/models` | List available Copilot models |
-| `POST` | `/sessions` | Create a new chat session |
-| `DELETE` | `/sessions/{id}` | Delete a session |
-| `GET` | `/reports/{filename}` | Download a generated PowerPoint |
+| `POST` | `/api/check` | チェックジョブを作成し `check_id` を返す |
+| `GET` | `/api/check/{id}/stream` | SSEでエージェントログと最終結果をストリーム |
 
-### WebSocket
+#### POST /api/check
 
-Endpoint: `ws://localhost:8000/ws/chat/{session_id}`
-
-Client payload:
+リクエスト:
 
 ```json
-{ "prompt": "Your question here", "model": "gpt-4o" }
+{
+  "site_id": "Site-2024-0847",
+  "check_items": ["自治体条件突合", "設計基準チェック", "代替案分析", "コスト試算"],
+  "free_text": "（任意）追加の指示"
+}
 ```
 
-Streaming events:
+レスポンス:
 
 ```json
-{ "type": "assistant.message_delta", "content": "..." }
-{ "type": "tool.execution_start", "tool_name": "generate_powerpoint_tool", "args": {...} }
-{ "type": "tool.execution_complete", "tool_name": "generate_powerpoint_tool", "result": "..." }
-{ "type": "assistant.message", "content": "..." }
-{ "type": "session.idle" }
-{ "type": "error", "message": "..." }
+{ "check_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" }
 ```
 
-When Work IQ is enabled, additional `tool.execution_*` events come directly from the attached MCP tools.
+#### GET /api/check/{id}/stream
+
+SSEイベント:
+
+```json
+{ "type": "log",    "message": "Work IQ クエリ: \"A市基地局 自治体条件\"" }
+{ "type": "result", "data": { "verdict": "conditional_go", "verdict_reason": "...", ... } }
+{ "type": "error",  "message": "エラー内容" }
+```
+
+#### CheckResult JSON スキーマ
+
+```typescript
+interface CheckResult {
+  verdict: "go" | "conditional_go" | "no_go";
+  verdict_reason: string;
+  checks: {
+    item: string;
+    standard: string;
+    current: string;
+    status: "pass" | "fail" | "constraint";
+  }[];
+  alternatives: {
+    name: string;
+    coverage: string;
+    cost_delta: string;
+    timeline_delta: string;
+  }[];
+  actions: string[];
+  sources: {
+    type: "email" | "meeting" | "document";
+    title: string;
+    date: string;
+    author: string;
+  }[];
+  coverage: {
+    current: number;
+    standard: number;
+    alternative: number | null;
+  };
+}
+```
+
+### その他のエンドポイント
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | ヘルスチェック |
+| `GET` | `/models` | 利用可能なCopilotモデル一覧 |
 
 ## Extending the Agent
 
-To add another local Python tool:
+新しいチェックルールを追加するには:
 
-1. Create a new module in `backend/tools/`.
-2. Export it from `backend/tools/__init__.py`.
-3. Add it to the `tools` list in `backend/agent.py`.
+1. `backend/tools/site_checker_tool.py` の `site_standards_checker` 関数にルールを追加する。
+2. 必要に応じて `SiteStandardsCheckerParams` モデルにパラメータを追加する。
 
-To change the approval workflow, edit `backend/skills/site_approval.py`.
+エージェントのクエリ戦略を変更するには:
+
+- `backend/skills/checker-skills/site-checker/SKILL.md` を編集する。
 
 ## References
 
