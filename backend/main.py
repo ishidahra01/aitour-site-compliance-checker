@@ -37,6 +37,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Keep auto-reload logs useful: suppress raw file-change counts from watchfiles.
+for noisy_logger in ("watchfiles.main", "watchfiles.watcher"):
+    logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     for factory, label in [
@@ -281,9 +292,25 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    reload_enabled = _env_flag("BACKEND_RELOAD", True)
+    reload_options = {}
+    if reload_enabled:
+        reload_options = {
+            "reload_includes": ["*.py", "*.env"],
+            "reload_excludes": [
+                "*.py[cod]",
+                "__pycache__",
+                ".venv",
+                "generated_reports",
+                "*.log",
+                "*.pptx",
+            ],
+        }
+
     uvicorn.run(
         "main:app",
         host=os.environ.get("BACKEND_HOST", "0.0.0.0"),
         port=int(os.environ.get("BACKEND_PORT", "8000")),
-        reload=True,
+        reload=reload_enabled,
+        **reload_options,
     )

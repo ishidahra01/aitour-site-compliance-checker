@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -64,6 +65,18 @@ def _extract_result_str(data: Any, data_dict: Dict[str, Any]) -> str:
         if val is not None:
             if isinstance(val, str):
                 return val
+            if isinstance(val, dict):
+                # Some SDK payloads wrap the actual JSON string in `content`/`detailedContent`.
+                for nested_key in ("detailedContent", "content", "result", "output", "message"):
+                    nested_val = val.get(nested_key)
+                    if nested_val is None:
+                        continue
+                    if isinstance(nested_val, str):
+                        return nested_val
+                    try:
+                        return json.dumps(nested_val, ensure_ascii=False)
+                    except Exception:
+                        return str(nested_val)
             try:
                 return json.dumps(val, ensure_ascii=False)
             except Exception:
@@ -72,6 +85,82 @@ def _extract_result_str(data: Any, data_dict: Dict[str, Any]) -> str:
     if fallback is not None:
         return str(fallback)
     return ""
+
+
+def _extract_tool_name(data: Any, data_dict: Dict[str, Any]) -> str:
+    for key in ("tool_name", "name", "toolName", "function_name", "functionName"):
+        val = data_dict.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+
+    for key in ("tool", "function", "tool_call", "call"):
+        nested = data_dict.get(key)
+        if isinstance(nested, dict):
+            for nested_key in ("tool_name", "name", "toolName", "function_name", "functionName"):
+                val = nested.get(nested_key)
+                if isinstance(val, str) and val.strip():
+                    return val.strip()
+
+    for attr in ("tool_name", "name", "toolName", "function_name", "functionName"):
+        val = getattr(data, attr, None)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+
+    return "unknown"
+
+
+def _extract_tool_call_id(data: Any, data_dict: Dict[str, Any]) -> str:
+    for key in ("tool_call_id", "call_id", "id", "toolCallId"):
+        val = data_dict.get(key)
+        if val is not None:
+            return str(val)
+    for attr in ("tool_call_id", "call_id", "id", "toolCallId"):
+        val = getattr(data, attr, None)
+        if val is not None:
+            return str(val)
+    return ""
+
+
+def _is_site_checker_tool(tool_name: str) -> bool:
+    if not tool_name:
+        return False
+    normalized = tool_name.strip().lower().replace("-", "_")
+    return normalized == "site_standards_checker" or normalized.endswith(".site_standards_checker")
+
+
+def _parse_json_result(raw: str) -> Optional[Dict[str, Any]]:
+    if not raw:
+        return None
+
+    text = raw.strip()
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        pass
+
+    # Handle fenced markdown like ```json ... ```.
+    fence = re.search(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fence:
+        candidate = fence.group(1).strip()
+        try:
+            parsed = json.loads(candidate)
+            return parsed if isinstance(parsed, dict) else None
+        except Exception:
+            pass
+
+    # Last resort: extract the outermost JSON object from mixed text.
+    first = text.find("{")
+    last = text.rfind("}")
+    if first >= 0 and last > first:
+        candidate = text[first:last + 1]
+        try:
+            parsed = json.loads(candidate)
+            return parsed if isinstance(parsed, dict) else None
+        except Exception:
+            pass
+
+    return None
 
 
 def _build_mcp_servers() -> Dict[str, Any]:
@@ -238,8 +327,12 @@ class CheckAgent:
             prompt = job.free_text or _build_check_prompt(job.site_id, job.check_items)
             done_event = asyncio.Event()
             result_container: Dict[str, Any] = {}
+            site_checker_started = False
+            site_checker_call_ids: set[str] = set()
+            site_checker_error: Optional[str] = None
 
             def on_event(event: Any) -> None:
+                nonlocal site_checker_started, site_checker_error
                 evt_type = (
                     event.type.value
                     if hasattr(event.type, "value")
@@ -249,11 +342,8 @@ class CheckAgent:
                 data_dict = _event_data_to_dict(data)
 
                 if evt_type == "tool.execution_start":
-                    tool_name = (
-                        data_dict.get("tool_name")
-                        or data_dict.get("name")
-                        or getattr(data, "tool_name", "unknown")
-                    )
+                    tool_name = _extract_tool_name(data, data_dict)
+                    tool_call_id = _extract_tool_call_id(data, data_dict)
                     args = (
                         data_dict.get("tool_args")
                         or data_dict.get("arguments")
@@ -261,7 +351,10 @@ class CheckAgent:
                         or {}
                     )
 
-                    if tool_name == "site_standards_checker":
+                    if _is_site_checker_tool(tool_name):
+                        site_checker_started = True
+                        if tool_call_id:
+                            site_checker_call_ids.add(tool_call_id)
                         job.log_queue.put_nowait(
                             {
                                 "type": "log",
@@ -283,21 +376,22 @@ class CheckAgent:
                             )
 
                 elif evt_type == "tool.execution_complete":
-                    tool_name = (
-                        data_dict.get("tool_name")
-                        or data_dict.get("name")
-                        or getattr(data, "tool_name", "unknown")
-                    )
+                    tool_name = _extract_tool_name(data, data_dict)
+                    tool_call_id = _extract_tool_call_id(data, data_dict)
                     result_str = _extract_result_str(data, data_dict)
+                    is_site_checker_complete = _is_site_checker_tool(tool_name) or (
+                        bool(tool_call_id) and tool_call_id in site_checker_call_ids
+                    )
 
-                    if tool_name == "site_standards_checker":
+                    if is_site_checker_complete:
                         job.log_queue.put_nowait(
                             {"type": "log", "message": "レポート生成完了 ✓"}
                         )
-                        try:
-                            parsed = json.loads(result_str)
+                        parsed = _parse_json_result(result_str)
+                        if parsed is not None:
                             result_container["data"] = parsed
-                        except Exception:
+                        else:
+                            site_checker_error = "site_standards_checker の戻り値が有効なJSONではありません。"
                             logger.warning(
                                 "Could not parse site_standards_checker result: %r",
                                 result_str[:200],
@@ -306,6 +400,22 @@ class CheckAgent:
                         # WorkIQ or other tool — emit a generic found message
                         job.log_queue.put_nowait(
                             {"type": "log", "message": "  → データ取得完了"}
+                        )
+
+                elif evt_type in {"tool.execution_error", "tool.execution_failed"}:
+                    tool_name = _extract_tool_name(data, data_dict)
+                    tool_call_id = _extract_tool_call_id(data, data_dict)
+                    is_site_checker_error = _is_site_checker_tool(tool_name) or (
+                        bool(tool_call_id) and tool_call_id in site_checker_call_ids
+                    )
+                    if is_site_checker_error:
+                        err = _extract_result_str(data, data_dict) or str(data_dict.get("error", ""))
+                        site_checker_error = err or "site_standards_checker の実行でエラーが発生しました。"
+                        job.log_queue.put_nowait(
+                            {
+                                "type": "error",
+                                "message": f"site_standards_checker 実行エラー: {site_checker_error}",
+                            }
                         )
 
                 elif evt_type == "session.idle":
@@ -328,10 +438,22 @@ class CheckAgent:
                     {"type": "result", "data": job.result}
                 )
             else:
+                if site_checker_started:
+                    message = (
+                        "適合性チェック結果の取得に失敗しました。"
+                        "site_standards_checker は開始されましたが、結果JSONを取得できませんでした。"
+                    )
+                else:
+                    message = (
+                        "適合性チェック結果の取得に失敗しました。"
+                        "エージェントが site_standards_checker を呼び出さなかった可能性があります。"
+                    )
+                if site_checker_error:
+                    message = f"{message} 詳細: {site_checker_error}"
                 await job.log_queue.put(
                     {
                         "type": "error",
-                        "message": "適合性チェック結果の取得に失敗しました。エージェントが site_standards_checker を呼び出さなかった可能性があります。",
+                        "message": message,
                     }
                 )
 
