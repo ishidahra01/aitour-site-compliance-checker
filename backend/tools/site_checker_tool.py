@@ -22,6 +22,14 @@ class SourceInput(BaseModel):
     title: str = Field(description="Source title")
     date: str = Field(description="Source date, e.g. '5/12'")
     author: str = Field(description="Source author name")
+    summary: Optional[str] = Field(
+        default=None,
+        description="Brief summary of the source content in Japanese",
+    )
+    url: Optional[str] = Field(
+        default=None,
+        description="URL or link to the source (e.g. Teams meeting link, email permalink, SharePoint URL)",
+    )
 
 
 class SiteStandardsCheckerParams(BaseModel):

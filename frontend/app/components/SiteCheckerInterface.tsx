@@ -59,11 +59,59 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function SourceIcon({ type }: { type: string }) {
+// ---------------------------------------------------------------------------
+// WorkIQ summary section helpers
+// ---------------------------------------------------------------------------
+
+interface WorkIQCategoryProps {
+  icon: string;
+  label: string;
+  sources: import("@/app/lib/types").Source[];
+}
+
+function WorkIQCategory({ icon, label, sources }: WorkIQCategoryProps) {
   return (
-    <span>
-      {type === "email" ? "✉️" : type === "meeting" ? "📋" : "📄"}
-    </span>
+    <div className="flex-1 min-w-0">
+      <div className="flex items-center gap-1.5 mb-2">
+        <span>{icon}</span>
+        <span className="text-xs font-semibold text-gray-700">{label}</span>
+      </div>
+      {sources.length === 0 ? (
+        <p className="text-xs text-gray-400 italic">該当情報なし</p>
+      ) : (
+        <ul className="space-y-2">
+          {sources.map((src, i) => (
+            <li key={i} className="text-xs text-gray-700">
+              <div className="flex items-start gap-1 flex-wrap">
+                {src.url ? (
+                  <a
+                    href={src.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-blue-600 hover:underline break-all"
+                  >
+                    {src.title}
+                  </a>
+                ) : (
+                  <span className="font-medium text-gray-800">{src.title}</span>
+                )}
+                {src.date && (
+                  <span className="text-gray-400 shrink-0">{src.date}</span>
+                )}
+                {src.author && (
+                  <span className="text-gray-400 shrink-0">· {src.author}</span>
+                )}
+              </div>
+              {src.summary && (
+                <p className="mt-0.5 text-gray-500 leading-relaxed">
+                  {src.summary}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -412,25 +460,28 @@ export default function SiteCheckerInterface() {
               </div>
             )}
 
-            {/* Sources */}
-            {result.sources && result.sources.length > 0 && (
-              <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-                <h3 className="text-sm font-semibold text-gray-700 mb-3">情報ソース</h3>
-                <div className="flex flex-wrap gap-2">
-                  {result.sources.map((src, i) => (
-                    <span
-                      key={i}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full
-                        bg-gray-100 text-gray-700 text-xs border border-gray-200 font-medium"
-                    >
-                      <SourceIcon type={src.type} />
-                      {src.title}
-                      {src.date ? ` ${src.date}` : ""}
-                    </span>
-                  ))}
+            {/* WorkIQ 情報サマリ */}
+            {(() => {
+              const meetings = (result.sources ?? []).filter((s) => s.type === "meeting");
+              const emails   = (result.sources ?? []).filter((s) => s.type === "email");
+              const docs     = (result.sources ?? []).filter((s) => s.type === "document");
+              return (
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-4">
+                    📊 WorkIQ 情報サマリ
+                  </h3>
+                  <div className="flex flex-col sm:flex-row gap-5 divide-y sm:divide-y-0 sm:divide-x divide-gray-100">
+                    <WorkIQCategory icon="💬" label="Teams（チャット・会議）" sources={meetings} />
+                    <div className="sm:pl-5 flex-1 min-w-0">
+                      <WorkIQCategory icon="✉️" label="メール" sources={emails} />
+                    </div>
+                    <div className="sm:pl-5 flex-1 min-w-0">
+                      <WorkIQCategory icon="📄" label="ドキュメント" sources={docs} />
+                    </div>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
           </div>
         )}

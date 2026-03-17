@@ -87,6 +87,8 @@ export interface Source {
   title: string;
   date: string;
   author: string;
+  summary?: string;
+  url?: string;
 }
 
 export interface CheckResult {
