@@ -37,3 +37,27 @@ export function connectWebSocket(sessionId: string): WebSocket {
 export function getReportDownloadUrl(filename: string): string {
   return `${API_BASE}/reports/${encodeURIComponent(filename)}`;
 }
+
+// ---------------------------------------------------------------------------
+// 基地局設置チェッカー API
+// ---------------------------------------------------------------------------
+
+export async function submitCheck(payload: {
+  site_id: string;
+  check_items: string[];
+  free_text?: string;
+}): Promise<string> {
+  const res = await fetch(`${API_BASE}/api/check`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`Failed to submit check: HTTP ${res.status}`);
+  const data = await res.json();
+  return data.check_id as string;
+}
+
+export function getCheckStreamUrl(checkId: string): string {
+  return `${API_BASE}/api/check/${encodeURIComponent(checkId)}/stream`;
+}
+

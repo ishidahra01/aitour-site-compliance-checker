@@ -63,3 +63,48 @@ export interface ChatSession {
   messages: ChatMessage[];
   isLoading: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// 基地局設置チェッカー types
+// ---------------------------------------------------------------------------
+
+export interface CheckItem {
+  item: string;
+  standard: string;
+  current: string;
+  status: "pass" | "fail" | "constraint";
+}
+
+export interface Alternative {
+  name: string;
+  coverage: string;
+  cost_delta: string;
+  timeline_delta: string;
+}
+
+export interface Source {
+  type: "email" | "meeting" | "document";
+  title: string;
+  date: string;
+  author: string;
+}
+
+export interface CheckResult {
+  verdict: "go" | "conditional_go" | "no_go";
+  verdict_reason: string;
+  checks: CheckItem[];
+  alternatives: Alternative[];
+  actions: string[];
+  sources: Source[];
+  coverage: {
+    current: number;
+    standard: number;
+    alternative: number | null;
+  };
+}
+
+export type LogEvent =
+  | { type: "log"; message: string }
+  | { type: "result"; data: CheckResult }
+  | { type: "error"; message: string };
+
