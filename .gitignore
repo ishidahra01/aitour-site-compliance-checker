@@ -1,0 +1,44 @@
+# .gitignore for base station compliance checker
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+*.egg
+*.whl
+
+# Dependency directories
+node_modules/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/

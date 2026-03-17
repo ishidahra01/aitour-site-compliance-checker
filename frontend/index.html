@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>基地局設置チェッカー</title>
+  <style>
+    /* ── Reset & base ───────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", sans-serif;
+      background: #f5f6f8;
+      color: #1a1a2e;
+      min-height: 100vh;
+      padding: 32px 16px 64px;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────────────── */
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    .header {
+      margin-bottom: 28px;
+    }
+    .header h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #0f172a;
+      letter-spacing: -0.02em;
+    }
+    .header p {
+      margin-top: 6px;
+      font-size: 0.9rem;
+      color: #64748b;
+    }
+
+    /* ── Card ───────────────────────────────────────────────────────────── */
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      border: 1px solid #e2e8f0;
+      padding: 24px;
+      margin-bottom: 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.04);
+    }
+    .card-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #94a3b8;
+      margin-bottom: 14px;
+    }
+
+    /* ── Form elements ──────────────────────────────────────────────────── */
+    label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: #374151;
+      margin-bottom: 6px;
+    }
+    select {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1.5px solid #cbd5e1;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      background: #fff;
+      color: #1a1a2e;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      cursor: pointer;
+      transition: border-color .2s;
+    }
+    select:focus { outline: none; border-color: #3b82f6; }
+
+    /* ── Tag toggles ────────────────────────────────────────────────────── */
+    .tags-label {
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: #374151;
+      margin-bottom: 10px;
+      margin-top: 18px;
+    }
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .tag {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border-radius: 999px;
+      border: 1.5px solid #cbd5e1;
+      background: #fff;
+      font-size: 0.85rem;
+      color: #475569;
+      cursor: pointer;
+      user-select: none;
+      transition: background .15s, border-color .15s, color .15s;
+    }
+    .tag.active {
+      background: #eff6ff;
+      border-color: #3b82f6;
+      color: #1d4ed8;
+      font-weight: 600;
+    }
+    .tag .dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #cbd5e1;
+      transition: background .15s;
+    }
+    .tag.active .dot { background: #3b82f6; }
+
+    /* ── Run button ─────────────────────────────────────────────────────── */
+    .run-btn {
+      display: block;
+      width: 100%;
+      margin-top: 22px;
+      padding: 13px;
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .2s, opacity .2s;
+    }
+    .run-btn:hover:not(:disabled) { background: #1d4ed8; }
+    .run-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+    /* ── Agent log ──────────────────────────────────────────────────────── */
+    #log-section { display: none; }
+    .log-box {
+      background: #0d1117;
+      border-radius: 8px;
+      padding: 16px 18px;
+      font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+      font-size: 0.8rem;
+      line-height: 1.7;
+      color: #c9d1d9;
+      max-height: 340px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .log-line { display: block; }
+    .log-line.ok   { color: #3fb950; }
+    .log-line.warn { color: #d29922; }
+    .log-line.err  { color: #f85149; }
+    .log-line.muted{ color: #8b949e; }
+
+    /* ── Spinner ────────────────────────────────────────────────────────── */
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid #4d5566;
+      border-top-color: #58a6ff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Results section ────────────────────────────────────────────────── */
+    #result-section { display: none; }
+
+    /* ── Verdict badge ──────────────────────────────────────────────────── */
+    .verdict-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .verdict-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 10px 28px;
+      border-radius: 999px;
+      font-size: 1.5rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .verdict-badge.go            { background: #dcfce7; color: #15803d; border: 2px solid #86efac; }
+    .verdict-badge.conditional_go{ background: #fef9c3; color: #a16207; border: 2px solid #fde047; }
+    .verdict-badge.no_go         { background: #fee2e2; color: #b91c1c; border: 2px solid #fca5a5; }
+    .verdict-reason {
+      flex: 1;
+      font-size: 0.9rem;
+      color: #475569;
+      line-height: 1.6;
+    }
+
+    /* ── Metric cards ───────────────────────────────────────────────────── */
+    .metric-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-top: 18px;
+    }
+    .metric-card {
+      background: #f8fafc;
+      border: 1.5px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 16px;
+      text-align: center;
+    }
+    .metric-card .metric-value {
+      font-size: 2rem;
+      font-weight: 800;
+      line-height: 1.1;
+    }
+    .metric-card .metric-label {
+      font-size: 0.75rem;
+      color: #64748b;
+      margin-top: 4px;
+    }
+    .metric-card.current .metric-value  { color: #ef4444; }
+    .metric-card.standard .metric-value { color: #f59e0b; }
+    .metric-card.alt .metric-value      { color: #22c55e; }
+
+    /* ── Check results table ────────────────────────────────────────────── */
+    .check-table-wrap { overflow-x: auto; margin-top: 4px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+    thead tr { border-bottom: 2px solid #e2e8f0; }
+    th {
+      text-align: left;
+      padding: 10px 12px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #94a3b8;
+    }
+    td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; color: #374151; }
+    tr:last-child td { border-bottom: none; }
+
+    .status-badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+    .status-badge.pass       { background: #dcfce7; color: #15803d; }
+    .status-badge.fail       { background: #fee2e2; color: #b91c1c; }
+    .status-badge.constraint { background: #fef9c3; color: #92400e; }
+
+    /* ── Actions list ───────────────────────────────────────────────────── */
+    .actions-list {
+      list-style: none;
+      counter-reset: action-counter;
+    }
+    .actions-list li {
+      counter-increment: action-counter;
+      display: flex;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid #f1f5f9;
+      font-size: 0.9rem;
+      color: #374151;
+      line-height: 1.55;
+    }
+    .actions-list li:last-child { border-bottom: none; }
+    .actions-list li::before {
+      content: counter(action-counter);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: #eff6ff;
+      color: #2563eb;
+      font-size: 0.78rem;
+      font-weight: 700;
+      margin-top: 1px;
+    }
+
+    /* ── Source pills ───────────────────────────────────────────────────── */
+    .source-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .source-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 12px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      border: 1px solid #e2e8f0;
+      color: #475569;
+      background: #f8fafc;
+    }
+    .source-pill .pill-icon { font-size: 0.85rem; }
+    .source-pill.email    { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
+    .source-pill.meeting  { background: #fdf4ff; border-color: #e9d5ff; color: #7c3aed; }
+    .source-pill.document { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; }
+
+    /* ── Section divider ────────────────────────────────────────────────── */
+    .section-heading {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: #0f172a;
+      margin-bottom: 12px;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ── Header ──────────────────────────────────────────────────────── -->
+  <div class="header">
+    <h1>🗼 基地局設置チェッカー</h1>
+    <p>Work IQ × Copilot SDK による適合性自動チェック</p>
+  </div>
+
+  <!-- ── Input card ──────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">対象サイト &amp; チェック設定</div>
+
+    <label for="site-select">サイト選択</label>
+    <select id="site-select">
+      <option value="">-- サイトを選択してください --</option>
+    </select>
+
+    <p class="tags-label">チェック項目</p>
+    <div class="tags" id="check-tags">
+      <div class="tag active" data-value="municipality">
+        <span class="dot"></span>自治体条件突合
+      </div>
+      <div class="tag active" data-value="design_standards">
+        <span class="dot"></span>設計基準チェック
+      </div>
+      <div class="tag active" data-value="alternatives">
+        <span class="dot"></span>代替案分析
+      </div>
+      <div class="tag active" data-value="cost">
+        <span class="dot"></span>コスト試算
+      </div>
+    </div>
+
+    <button class="run-btn" id="run-btn" disabled>適合性チェックを実行</button>
+  </div>
+
+  <!-- ── Agent log ───────────────────────────────────────────────────── -->
+  <div class="card" id="log-section">
+    <div class="card-title" id="log-title">
+      <span class="spinner"></span>エージェントログ
+    </div>
+    <div class="log-box" id="log-box"></div>
+  </div>
+
+  <!-- ── Results ─────────────────────────────────────────────────────── -->
+  <div id="result-section">
+
+    <!-- Verdict + metric cards -->
+    <div class="card">
+      <div class="card-title">チェック結果</div>
+      <div class="verdict-wrapper">
+        <div class="verdict-badge" id="verdict-badge">--</div>
+        <p class="verdict-reason" id="verdict-reason"></p>
+      </div>
+      <div class="metric-row" id="metric-row"></div>
+    </div>
+
+    <!-- Check results table -->
+    <div class="card">
+      <div class="section-heading">項目別チェック結果</div>
+      <div class="check-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>項目</th>
+              <th>基準</th>
+              <th>現状</th>
+              <th>判定</th>
+            </tr>
+          </thead>
+          <tbody id="checks-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="card" id="actions-card" style="display:none">
+      <div class="section-heading">推奨アクション</div>
+      <ul class="actions-list" id="actions-list"></ul>
+    </div>
+
+    <!-- Sources -->
+    <div class="card">
+      <div class="section-heading">情報ソース</div>
+      <div class="source-pills" id="source-pills"></div>
+    </div>
+
+  </div><!-- /result-section -->
+
+</div><!-- /container -->
+
+<script>
+/* ── Globals ────────────────────────────────────────────────────────────── */
+const API = '';   // same origin
+let activeCheckItems = new Set(['municipality','design_standards','alternatives','cost']);
+
+/* ── Load sites ─────────────────────────────────────────────────────────── */
+async function loadSites() {
+  try {
+    const res = await fetch(`${API}/api/sites`);
+    const sites = await res.json();
+    const sel = document.getElementById('site-select');
+    sites.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      opt.textContent = s.name;
+      sel.appendChild(opt);
+    });
+  } catch(e) {
+    console.error('Failed to load sites', e);
+  }
+}
+
+/* ── Tag toggle ─────────────────────────────────────────────────────────── */
+document.getElementById('check-tags').addEventListener('click', e => {
+  const tag = e.target.closest('.tag');
+  if (!tag) return;
+  const val = tag.dataset.value;
+  if (activeCheckItems.has(val)) {
+    activeCheckItems.delete(val);
+    tag.classList.remove('active');
+  } else {
+    activeCheckItems.add(val);
+    tag.classList.add('active');
+  }
+});
+
+/* ── Site select ─────────────────────────────────────────────────────────── */
+document.getElementById('site-select').addEventListener('change', e => {
+  document.getElementById('run-btn').disabled = !e.target.value;
+});
+
+/* ── Run button ─────────────────────────────────────────────────────────── */
+document.getElementById('run-btn').addEventListener('click', async () => {
+  const siteId = document.getElementById('site-select').value;
+  if (!siteId) return;
+
+  resetUI();
+
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true;
+
+  // Show log area
+  const logSection = document.getElementById('log-section');
+  logSection.style.display = 'block';
+  logSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  try {
+    // Start check job
+    const postRes = await fetch(`${API}/api/check`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        site_id: siteId,
+        check_items: [...activeCheckItems]
+      })
+    });
+    const { id } = await postRes.json();
+
+    // Stream SSE
+    await streamLog(id);
+  } catch(e) {
+    appendLog(`ERROR: ${e.message}`, 'err');
+  } finally {
+    btn.disabled = false;
+    setLogTitleDone();
+  }
+});
+
+/* ── SSE streaming ──────────────────────────────────────────────────────── */
+function streamLog(jobId) {
+  return new Promise((resolve, reject) => {
+    const es = new EventSource(`${API}/api/check/${jobId}/stream`);
+
+    es.onmessage = e => {
+      let data;
+      try { data = JSON.parse(e.data); } catch { return; }
+
+      if (data.type === 'heartbeat') return;
+
+      if (data.type === 'log') {
+        const cls = classForLog(data.text);
+        appendLog(data.text, cls);
+      }
+
+      if (data.type === 'error') {
+        appendLog('ERROR: ' + data.text, 'err');
+        es.close();
+        reject(new Error(data.text));
+      }
+
+      if (data.type === 'done') {
+        es.close();
+        if (data.result) renderResult(data.result);
+        resolve();
+      }
+    };
+
+    es.onerror = () => {
+      es.close();
+      // Try polling for result as fallback
+      pollResult(jobId).then(resolve).catch(reject);
+    };
+  });
+}
+
+async function pollResult(jobId) {
+  for (let i = 0; i < 30; i++) {
+    await sleep(2000);
+    const res = await fetch(`${API}/api/check/${jobId}`);
+    if (res.status === 200) {
+      const result = await res.json();
+      renderResult(result);
+      return;
+    }
+  }
+  throw new Error('Timed out waiting for result');
+}
+
+/* ── Log helpers ────────────────────────────────────────────────────────── */
+function classForLog(text) {
+  if (text.includes('✓') || text.includes('connected') || text.includes('generated')) return 'ok';
+  if (text.includes('逸脱') || text.includes('ERROR') || text.includes('✗')) return 'err';
+  if (text.includes('△') || text.includes('constraint') || text.includes('制限')) return 'warn';
+  if (text.startsWith('  →')) return 'muted';
+  return '';
+}
+
+function appendLog(text, cls = '') {
+  const box = document.getElementById('log-box');
+  const line = document.createElement('span');
+  line.className = `log-line${cls ? ' ' + cls : ''}`;
+  line.textContent = text;
+  box.appendChild(line);
+  box.appendChild(document.createTextNode('\n'));
+  box.scrollTop = box.scrollHeight;
+}
+
+function setLogTitleDone() {
+  document.getElementById('log-title').innerHTML = 'エージェントログ <span style="color:#3fb950;font-size:.9em">✓ 完了</span>';
+}
+
+/* ── Render result ──────────────────────────────────────────────────────── */
+function renderResult(result) {
+  const sec = document.getElementById('result-section');
+  sec.style.display = 'block';
+  sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  // Verdict badge
+  const badge = document.getElementById('verdict-badge');
+  const verdictLabels = { go: 'GO', conditional_go: '条件付き GO', no_go: 'NO-GO' };
+  badge.textContent = verdictLabels[result.verdict] || result.verdict;
+  badge.className = `verdict-badge ${result.verdict}`;
+  document.getElementById('verdict-reason').textContent = result.verdict_reason || '';
+
+  // Metric cards
+  const summary = result.summary || {};
+  const metrics = [
+    { label: 'カバレッジ現状', value: summary.coverage_current_pct != null ? summary.coverage_current_pct + '%' : '--', cls: 'current' },
+    { label: '社内基準', value: summary.coverage_standard_pct != null ? summary.coverage_standard_pct + '%' : '--', cls: 'standard' },
+    { label: '代替案適用後', value: summary.coverage_alternative_pct != null ? summary.coverage_alternative_pct + '%' : '--', cls: 'alt' },
+  ];
+  const row = document.getElementById('metric-row');
+  row.innerHTML = '';
+  metrics.forEach(m => {
+    const card = document.createElement('div');
+    card.className = `metric-card ${m.cls}`;
+    card.innerHTML = `
+      <div class="metric-value">${m.value}</div>
+      <div class="metric-label">${m.label}</div>
+    `;
+    row.appendChild(card);
+  });
+
+  // Checks table
+  const tbody = document.getElementById('checks-tbody');
+  tbody.innerHTML = '';
+  (result.checks || []).forEach(c => {
+    const statusLabels = { pass: '適合', fail: '不適合', constraint: '条件付き' };
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${esc(c.item)}</td>
+      <td>${esc(c.standard)}</td>
+      <td>${esc(c.current)}</td>
+      <td><span class="status-badge ${c.status}">${statusLabels[c.status] || c.status}</span></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  // Actions
+  const actionsCard = document.getElementById('actions-card');
+  const actionsList = document.getElementById('actions-list');
+  actionsList.innerHTML = '';
+  const actions = result.actions || [];
+  if (actions.length) {
+    actionsCard.style.display = 'block';
+    actions.forEach(a => {
+      const li = document.createElement('li');
+      li.textContent = a;
+      actionsList.appendChild(li);
+    });
+  }
+
+  // Sources
+  const pillsEl = document.getElementById('source-pills');
+  pillsEl.innerHTML = '';
+  const typeIcons = { email: '✉', meeting: '🎙', document: '📄' };
+  (result.sources || []).forEach(s => {
+    const pill = document.createElement('div');
+    pill.className = `source-pill ${s.type}`;
+    const shortTitle = s.title.length > SOURCE_TITLE_MAX_LENGTH
+      ? s.title.slice(0, SOURCE_TITLE_TRUNCATE_AT) + '…'
+      : s.title;
+    const dateShort = s.date ? s.date.replace(/^\d{4}-/, '') : '';
+    pill.innerHTML = `<span class="pill-icon">${typeIcons[s.type] || '📎'}</span>${esc(shortTitle)}${dateShort ? ' ' + dateShort : ''}`;
+    pill.title = `${s.title}\n${s.author} (${s.date})`;
+    pillsEl.appendChild(pill);
+  });
+}
+
+/* ── Utilities ──────────────────────────────────────────────────────────── */
+const SOURCE_TITLE_MAX_LENGTH = 20;
+const SOURCE_TITLE_TRUNCATE_AT = 18;
+function resetUI() {
+  document.getElementById('log-box').innerHTML = '';
+  document.getElementById('log-title').innerHTML =
+    '<span class="spinner"></span>エージェントログ';
+  document.getElementById('result-section').style.display = 'none';
+  document.getElementById('metric-row').innerHTML = '';
+  document.getElementById('checks-tbody').innerHTML = '';
+  document.getElementById('actions-list').innerHTML = '';
+  document.getElementById('source-pills').innerHTML = '';
+  document.getElementById('actions-card').style.display = 'none';
+}
+
+function esc(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/* ── Init ───────────────────────────────────────────────────────────────── */
+loadSites();
+</script>
+</body>
+</html>
